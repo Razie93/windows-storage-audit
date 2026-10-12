@@ -7,6 +7,7 @@ The script is read-only: it never deletes or modifies scanned files.
 from __future__ import annotations
 
 import argparse
+import csv
 import heapq
 import json
 import os
@@ -27,6 +28,60 @@ def format_bytes(size: int) -> str:
             return f"{value:.2f} {unit}"
         value /= 1024
     return f"{size} B"
+
+
+def csv_safe_cell(value: object) -> object:
+    """Prevent spreadsheet software from interpreting text as a formula."""
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
+def write_csv_report(report: dict, output: Path) -> None:
+    """Write a flattened, spreadsheet-friendly version of a scan report."""
+    fieldnames: list[str] = ["section", "category", "name", "path", "size_bytes", "value"]
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with output.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+
+        def write_row(row: dict[str, object]) -> None:
+            writer.writerow({key: csv_safe_cell(value) for key, value in row.items()})
+
+        for name in (
+            "scan_root",
+            "generated_at",
+            "duration_seconds",
+            "timed_out",
+            "files_seen",
+            "errors",
+            "skipped_reparse_points",
+        ):
+            write_row({"section": "summary", "name": name, "value": report[name]})
+
+        for name, size in report["disk"].items():
+            write_row({"section": "disk", "name": name, "size_bytes": size})
+
+        for category, items in report["breakdowns"].items():
+            for item in items:
+                write_row(
+                    {
+                        "section": "breakdown",
+                        "category": category,
+                        "name": item["name"],
+                        "size_bytes": item["size_bytes"],
+                    }
+                )
+
+        for item in report["largest_files"]:
+            write_row(
+                {
+                    "section": "largest_file",
+                    "path": item["path"],
+                    "size_bytes": item["size_bytes"],
+                }
+            )
 
 
 def is_reparse_point(stat_result: os.stat_result) -> bool:
@@ -59,7 +114,16 @@ def existing_breakdown_roots(scan_root: Path) -> dict[str, Path]:
     return {name: path.resolve() for name, path in candidates.items() if path.exists()}
 
 
-def scan(root: Path, output: Path, top_files: int, time_limit: int) -> dict:
+def scan(
+    root: Path,
+    output: Path,
+    top_files: int,
+    time_limit: int,
+    output_format: str = "json",
+) -> dict:
+    if output_format not in {"json", "csv"}:
+        raise ValueError(f"Unsupported output format: {output_format}")
+
     root = root.resolve()
     breakdown_roots = existing_breakdown_roots(root)
     aggregates: dict[str, DefaultDict[str, int]] = {
@@ -140,8 +204,11 @@ def scan(root: Path, output: Path, top_files: int, time_limit: int) -> dict:
         ],
     }
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if output_format == "csv":
+        write_csv_report(report, output)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
 
@@ -149,7 +216,16 @@ def parse_args() -> argparse.Namespace:
     default_root = f"{os.environ.get('SystemDrive', 'C:')}\\" if os.name == "nt" else str(Path.home())
     parser = argparse.ArgumentParser(description="Find large files and folders without changing them.")
     parser.add_argument("--root", default=default_root, help="Drive or directory to scan (default: system drive).")
-    parser.add_argument("--output", default="storage_scan_report.json", help="JSON report path.")
+    parser.add_argument(
+        "--format",
+        choices=("json", "csv"),
+        default="json",
+        help="Report format (default: json).",
+    )
+    parser.add_argument(
+        "--output",
+        help="Report path (default: storage_scan_report.<format>).",
+    )
     parser.add_argument("--top-files", type=int, default=100, help="Number of largest files to record.")
     parser.add_argument("--time-limit", type=int, default=600, help="Maximum scan duration in seconds.")
     return parser.parse_args()
@@ -165,13 +241,14 @@ def main() -> int:
     if args.time_limit < 1:
         raise SystemExit("--time-limit must be at least 1 second")
 
-    report = scan(root, Path(args.output).resolve(), args.top_files, args.time_limit)
+    output = Path(args.output or f"storage_scan_report.{args.format}").resolve()
+    report = scan(root, output, args.top_files, args.time_limit, args.format)
     disk = report["disk"]
     print(f"Scanned: {report['scan_root']}")
     print(f"Files checked: {report['files_seen']:,}")
     print(f"Used: {format_bytes(disk['used_bytes'])} / {format_bytes(disk['total_bytes'])}")
     print(f"Free: {format_bytes(disk['free_bytes'])}")
-    print(f"Report: {Path(args.output).resolve()}")
+    print(f"Report: {output}")
     if report["timed_out"]:
         print("Warning: the time limit was reached, so the report is partial.")
     return 0
