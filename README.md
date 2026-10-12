@@ -1,6 +1,6 @@
 # Windows Storage Audit
 
-A read-only Python utility that scans a Windows drive or directory and creates a JSON report of:
+A read-only Python utility that scans a Windows drive or directory and creates a JSON or CSV report of:
 
 - Largest top-level folders
 - User profile and `AppData` usage
@@ -35,6 +35,15 @@ Choose the output file and number of large files recorded:
 python storage_scan.py --output my-report.json --top-files 50
 ```
 
+Create a spreadsheet-friendly CSV report:
+
+```bat
+python storage_scan.py --format csv --output my-report.csv
+```
+
+When `--output` is omitted, the report is named `storage_scan_report.json` or
+`storage_scan_report.csv` according to the selected format.
+
 Limit the scan to five minutes:
 
 ```bat
@@ -43,7 +52,14 @@ python storage_scan.py --time-limit 300
 
 ## Output
 
-The JSON report contains disk usage, directory breakdowns, scan statistics, and the largest files found. Reports are ignored by Git because they may reveal private local paths and filenames.
+Both report formats contain disk usage, directory breakdowns, scan statistics,
+and the largest files found. JSON preserves the nested report structure. CSV
+uses the columns `section`, `category`, `name`, `path`, `size_bytes`, and
+`value` so the same information can be filtered and sorted in spreadsheet
+software. CSV files are UTF-8 with a byte-order mark for compatibility with
+Microsoft Excel.
+
+Reports are ignored by Git because they may reveal private local paths and filenames.
 
 ## Notes
 

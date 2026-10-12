@@ -1,5 +1,8 @@
 __pycache__/
 *.py[cod]
 *.json
+*.csv
 storage_scan_report.json
+storage_scan_report.csv
 *-storage-report.json
+*-storage-report.csv
